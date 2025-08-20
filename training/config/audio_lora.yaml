@@ -1,0 +1,117 @@
+# Configuration for VGGT-Audio LoRA Fine-tuning
+
+# Model configuration
+model:
+  base_checkpoint: "facebook/VGGT-1B"  # Or path to local checkpoint
+  enable_acoustic: true
+  audio_feature_dim: 768
+  freq_bands: 8
+
+# LoRA configuration
+lora:
+  rank: 16  # Start with 16, can go as low as 4 for very limited data
+  alpha: 16.0  # Usually set equal to rank
+  dropout: 0.1
+  # Target specific modules for audio learning
+  target_modules:
+    # Audio-specific modules (always include)
+    - "audio_proj"
+    - "audio_token"
+    - "acoustic_head"
+    # Attention layers (last 6 blocks for task-specific learning)
+    - "global_blocks.18.qkv"
+    - "global_blocks.19.qkv"
+    - "global_blocks.20.qkv"
+    - "global_blocks.21.qkv"
+    - "global_blocks.22.qkv"
+    - "global_blocks.23.qkv"
+    # Optional: Frame attention for audio-visual correlation
+    - "frame_blocks.20.qkv"
+    - "frame_blocks.21.qkv"
+    - "frame_blocks.22.qkv"
+    - "frame_blocks.23.qkv"
+
+# Data configuration
+data:
+  data_dir: "/path/to/unreal/data"
+  max_frames_per_scene: 30  # Reduce if GPU memory limited
+  frame_skip: 2  # Sample every N frames to increase diversity
+  audio_feature_type: "mel_spectrogram"
+  audio_augmentation:
+    add_noise: 0.01
+    time_stretch: [0.9, 1.1]
+    pitch_shift: [-2, 2]
+
+# Training configuration
+training:
+  epochs: 30  # More epochs due to limited data
+  batch_size: 2  # Small batch size for limited GPU memory
+  gradient_accumulation: 4  # Effective batch = 2 * 4 = 8
+  learning_rate: 5e-4  # Higher LR for LoRA
+  warmup_steps: 500
+  weight_decay: 0.01
+  grad_clip: 1.0
+  
+  # Mixed precision
+  use_amp: true
+  amp_dtype: "bfloat16"  # or "float16" for older GPUs
+
+# Loss configuration
+loss:
+  # Audio-specific losses
+  rendering_weight: 1.0  # Match rendered to recorded audio
+  perceptual_weight: 0.5  # Perceptual similarity in frequency domain
+  physical_weight: 0.1  # Physical consistency of properties
+  rt60_weight: 0.2  # Reverberation time matching (if available)
+  
+  # Optional: Keep some visual losses for stability
+  depth_weight: 0.1  # Maintain depth prediction quality
+  camera_weight: 0.1  # Maintain camera pose accuracy
+
+# Optimization strategies for limited data
+optimization:
+  # Data efficiency techniques
+  use_mixup: true  # Mix audio features between samples
+  mixup_alpha: 0.2
+  
+  # Regularization
+  label_smoothing: 0.1
+  dropout_rate: 0.1
+  
+  # Curriculum learning
+  curriculum:
+    enabled: true
+    start_frames: 10
+    end_frames: 30
+    warmup_epochs: 5
+
+# Evaluation configuration
+evaluation:
+  val_frequency: 1  # Validate every epoch
+  metrics:
+    - "audio_mse"  # Mean squared error in time domain
+    - "stft_loss"  # Short-time Fourier transform loss
+    - "rt60_error"  # Reverberation time error
+    - "absorption_mae"  # Material property accuracy
+  save_best_metric: "stft_loss"
+
+# Checkpoint configuration
+checkpoint:
+  save_dir: "checkpoints/audio_lora"
+  save_frequency: 5
+  keep_last: 3
+  merge_on_best: true  # Merge LoRA weights when best model found
+
+# Hardware configuration
+hardware:
+  num_gpus: 1
+  num_workers: 4
+  pin_memory: true
+  
+# Logging
+logging:
+  use_wandb: false  # Set to true if using Weights & Biases
+  project_name: "vggt-audio-lora"
+  log_frequency: 10
+  log_audio_samples: true
+  log_visualizations: true
