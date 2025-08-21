@@ -240,14 +240,34 @@ class AcousticPropagation(nn.Module):
         # Distance attenuation (inverse square law)
         attenuation = 1.0 / (distance + 1.0) ** self.distance_attenuation
         
+        # Ensure all tensors are on the same device
+        device = audio_freq.device
+        distance = distance.to(device)
+        attenuation = attenuation.to(device)
+        
+        # Ensure attenuation has proper shape for broadcasting
+        if audio_freq.dim() == 2:  # [batch, freq_samples]
+            attenuation = attenuation.unsqueeze(-1)  # [batch, 1]
+            
         # Air absorption (frequency dependent)
-        if self.air_absorption:
-            # Higher frequencies absorbed more over distance
-            freq_attenuation = torch.exp(-self.air_absorption_coeffs * distance.unsqueeze(-1))
-            attenuation = attenuation.unsqueeze(-1) * freq_attenuation
+        if self.air_absorption and hasattr(self, 'air_absorption_coeffs'):
+            # Create frequency-dependent attenuation
+            num_freq_samples = audio_freq.shape[-1]
+            freq_range = torch.linspace(0, 1, num_freq_samples, device=device)
+            freq_attenuation = torch.exp(-0.01 * distance.unsqueeze(-1) * freq_range)
+            attenuation = attenuation * freq_attenuation
             
         # Occlusion filtering (low-pass effect)
-        occlusion_filter = 1.0 - occlusion.unsqueeze(-1) * 0.8  # Reduce high frequencies
+        if occlusion is not None:
+            # Simple low-pass filter effect
+            occlusion = occlusion.to(device)
+            occlusion_factor = 1.0 - occlusion * 0.8
+            if occlusion_factor.dim() < audio_freq.dim():
+                occlusion_filter = occlusion_factor.unsqueeze(-1)
+            else:
+                occlusion_filter = occlusion_factor
+        else:
+            occlusion_filter = torch.tensor(1.0, device=device)
         
         return audio_freq * attenuation * occlusion_filter
     
@@ -264,12 +284,27 @@ class AcousticPropagation(nn.Module):
         avg_reflection = acoustic_properties["reflection"].mean(dim=(1, 2, 3))
         
         # Apply surface absorption (frequency dependent)
-        surface_filter = (1.0 - avg_absorption) * avg_reflection
-        
+        # If absorption has frequency bands, use them; otherwise broadcast
+        if avg_absorption.shape[-1] == self.freq_bands:
+            # Map frequency bands to audio frequency samples
+            num_freq_samples = audio_freq.shape[-1]
+            # Interpolate absorption values across frequency range
+            surface_filter = (1.0 - avg_absorption.mean(dim=-1, keepdim=True)) * avg_reflection.mean(dim=-1, keepdim=True)
+        else:
+            surface_filter = (1.0 - avg_absorption.mean()) * avg_reflection.mean()
+            
         # Apply distance attenuation for total path length
         distance_atten = 1.0 / (reflection["path_length"] + 1.0) ** self.distance_attenuation
         
-        return audio_freq * surface_filter * distance_atten.unsqueeze(-1)
+        # Ensure proper broadcasting
+        if audio_freq.dim() == 2:
+            if surface_filter.dim() == 0:
+                surface_filter = surface_filter.unsqueeze(0).unsqueeze(-1)
+            elif surface_filter.dim() == 1:
+                surface_filter = surface_filter.unsqueeze(-1)
+            distance_atten = distance_atten.unsqueeze(-1)
+        
+        return audio_freq * surface_filter * distance_atten
     
     def _spatialize_audio(
         self,
