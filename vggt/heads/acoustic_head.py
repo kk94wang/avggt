@@ -9,7 +9,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from typing import List, Tuple, Optional
 
-from vggt.heads.dpt_head import DPTHead
+from .dpt_head import DPTHead
 
 
 class AcousticHead(nn.Module):
